@@ -51,16 +51,6 @@ class StockDataExplorer:
         else:
             print("[ERROR] No data. Call fetch_data() first.")
 
-    def plot_price(self):
-        if self.df is not None:
-            self.df[['Adj Close', 'MA20', 'MA50']].plot(title=f"{self.ticker} - Adjusted Close and Moving Averages", figsize=(12, 6))
-            plt.xlabel("Date")
-            plt.ylabel("Price")
-            plt.grid(True)
-            plt.show()
-        else:
-            print("[ERROR] No data to plot.")
-
     def plot_volume(self):
         if self.df is not None:
             self.df['Volume'].plot(title=f"{self.ticker} - Volume Traded", figsize=(10, 5), color='orange')
@@ -80,3 +70,38 @@ class StockDataExplorer:
             plt.show()
         else:
             print("[ERROR] No returns to plot. Did you run feature_engineering()?")
+    def generate_signals(self):
+        if self.df is not None:
+            # Generate signals (1 for buy, -1 for sell)
+            self.df['Signal'] = 0  # Default no signal
+            self.df['Signal'][20:] = [1 if self.df['MA20'][i] > self.df['MA50'][i] else 0 for i in range(20, len(self.df))]
+            self.df['Position'] = self.df['Signal'].diff()
+            print("[INFO] Trading signals generated.")
+        else:
+            print("[ERROR] No data. Call fetch_data() first.")
+    def plot_price(self):
+        
+        if self.df is not None:
+            plt.figure(figsize=(12, 6))
+            plt.plot(self.df['Adj Close'], label="Adj Close", color='black', alpha=0.5)
+            plt.plot(self.df['MA20'], label="20-Day MA", color='blue', alpha=0.75)
+            plt.plot(self.df['MA50'], label="50-Day MA", color='red', alpha=0.75)
+            
+            # Plot Buy signals
+            plt.plot(self.df[self.df['Position'] == 1].index, 
+                     self.df['MA20'][self.df['Position'] == 1], 
+                     '^', markersize=10, color='g', lw=0, label="Buy Signal")
+
+            # Plot Sell signals
+            plt.plot(self.df[self.df['Position'] == -1].index, 
+                     self.df['MA20'][self.df['Position'] == -1], 
+                     'v', markersize=10, color='r', lw=0, label="Sell Signal")
+            
+            plt.title(f"{self.ticker} - Adjusted Close with Buy/Sell Signals")
+            plt.xlabel("Date")
+            plt.ylabel("Price")
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+        else:
+            print("[ERROR] No data to plot.")
