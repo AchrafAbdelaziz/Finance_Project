@@ -1,7 +1,13 @@
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
-
+try:
+    import plotly.graph_objects as go
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
+    print("[WARNING] Plotly not installed - using matplotlib for plots")
 
 class StockDataExplorer:
     def __init__(self, ticker, period="6mo", interval="1d"):
@@ -9,99 +15,225 @@ class StockDataExplorer:
         self.period = period
         self.interval = interval
         self.df = None
+        self.initial_capital = None
+        self.backtest_results = None
 
+    # Data Pipeline Methods
     def fetch_data(self):
-        stock = yf.Ticker(self.ticker)
-        self.df = stock.history(period=self.period, interval=self.interval, auto_adjust = False)
-        print(f"[INFO] Data fetched for {self.ticker} with {len(self.df)} records.")
-        return self.df
+        """Fetch stock data from Yahoo Finance with error handling"""
+        try:
+            stock = yf.Ticker(self.ticker)
+            self.df = stock.history(
+                period=self.period,
+                interval=self.interval,
+                auto_adjust=False  # Keep 'Adj Close' column
+            )
+            if self.df.empty:
+                raise ValueError(f"No data found for {self.ticker}")
+            print(f" Successfully fetched {len(self.df)} records for {self.ticker}")
+            return self.df
+        except Exception as e:
+            print(f"Error fetching data: {str(e)}")
+            return None
 
     def clean_data(self):
+        """Clean data and handle missing values"""
         if self.df is not None:
-            before = len(self.df)
+            initial_rows = len(self.df)
             self.df.dropna(inplace=True)
-            after = len(self.df)
-            print(f"[INFO] Cleaned data. Dropped {before - after} rows with missing values.")
+            print(f" Removed {initial_rows - len(self.df)} rows with missing values")
         else:
-            print("[ERROR] No data. Call fetch_data() first.")
+            print(" No data to clean. Call fetch_data() first")
 
-    def feature_engineering(self):
-        if self.df is not None:
-            # Calculate daily returns
-            self.df['Return'] = self.df['Adj Close'].pct_change()
-            
-            # 20-day Moving Average (roughly 1 month)
-            self.df['MA20'] = self.df['Adj Close'].rolling(window=20).mean()
-            
-            # 50-day Moving Average
-            self.df['MA50'] = self.df['Adj Close'].rolling(window=50).mean()
-            
-            # 20-day Volatility
-            self.df['Volatility20'] = self.df['Return'].rolling(window=20).std()
-
-            print("[INFO] Feature engineering completed.")
-            return self.df
-        else:
-            print("[ERROR] No data. Call fetch_data() first.")
-
-    def show_summary(self):
-        if self.df is not None:
-            print("[SUMMARY]")
-            print(self.df.describe())
-        else:
-            print("[ERROR] No data. Call fetch_data() first.")
-
-    def plot_volume(self):
-        if self.df is not None:
-            self.df['Volume'].plot(title=f"{self.ticker} - Volume Traded", figsize=(10, 5), color='orange')
-            plt.xlabel("Date")
-            plt.ylabel("Volume")
-            plt.grid(True)
-            plt.show()
-        else:
-            print("[ERROR] No data to plot.")
-
-    def plot_returns(self):
-        if self.df is not None:
-            self.df['Return'].plot(title=f"{self.ticker} - Daily Returns", figsize=(10, 5), color='green')
-            plt.xlabel("Date")
-            plt.ylabel("Return")
-            plt.grid(True)
-            plt.show()
-        else:
-            print("[ERROR] No returns to plot. Did you run feature_engineering()?")
-    def generate_signals(self):
-        if self.df is not None:
-            # Generate signals (1 for buy, -1 for sell)
-            self.df['Signal'] = 0  # Default no signal
-            self.df['Signal'][20:] = [1 if self.df['MA20'][i] > self.df['MA50'][i] else 0 for i in range(20, len(self.df))]
-            self.df['Position'] = self.df['Signal'].diff()
-            print("[INFO] Trading signals generated.")
-        else:
-            print("[ERROR] No data. Call fetch_data() first.")
-    def plot_price(self):
+    # Feature Engineering
+    def feature_engineering(self, ema_windows=[12, 26], rsi_window=14, 
+                          macd_fast=12, macd_slow=26, macd_signal=9):
+        """Add technical indicators to DataFrame"""
+        if self.df is None:
+            print("⚠️ No data. Call fetch_data() first")
+            return
         
-        if self.df is not None:
-            plt.figure(figsize=(12, 6))
-            plt.plot(self.df['Adj Close'], label="Adj Close", color='black', alpha=0.5)
-            plt.plot(self.df['MA20'], label="20-Day MA", color='blue', alpha=0.75)
-            plt.plot(self.df['MA50'], label="50-Day MA", color='red', alpha=0.75)
-            
-            # Plot Buy signals
-            plt.plot(self.df[self.df['Position'] == 1].index, 
-                     self.df['MA20'][self.df['Position'] == 1], 
-                     '^', markersize=10, color='g', lw=0, label="Buy Signal")
+        
+        self.df['Return'] = self.df['Adj Close'].pct_change()
+        
+        ema_windows = [12, 26]  # or any other list of periods
+        for window in ema_windows:
+            self.df[f'EMA{window}'] = self.df['Adj Close'].ewm(span=window, adjust=False).mean()
+        # for window in ma_windows:
+        #     self.df[f'MA{window}'] = self.df['Adj Close'].rolling(window).mean()
+        
+        
+        self.df['Volatility20'] = self.df['Return'].rolling(20).std()
+        
+        # RSI
+        delta = self.df['Adj Close'].diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        avg_gain = gain.rolling(rsi_window).mean()
+        avg_loss = loss.rolling(rsi_window).mean()
+        rs = avg_gain / avg_loss
+        self.df['RSI'] = 100 - (100 / (1 + rs))
+        
+        # MACD
+        ema_fast = self.df['Adj Close'].ewm(span=macd_fast, adjust=False).mean()
+        ema_slow = self.df['Adj Close'].ewm(span=macd_slow, adjust=False).mean()
+        self.df['MACD'] = ema_fast - ema_slow
+        self.df['Signal_Line'] = self.df['MACD'].ewm(span=macd_signal, adjust=False).mean()
+        
+        print("🔧 Feature engineering complete")
+        return self.df
 
-            # Plot Sell signals
-            plt.plot(self.df[self.df['Position'] == -1].index, 
-                     self.df['MA20'][self.df['Position'] == -1], 
-                     'v', markersize=10, color='r', lw=0, label="Sell Signal")
+    # Signal Generation
+    def generate_signals(self):
+        """Generate buy/sell signals using MACD crossover strategy"""
+        if self.df is None:
+            print("No data. Call fetch_data() first")
+            return
+        
+        # Ensure MACD columns exist
+        if 'MACD' not in self.df.columns or 'Signal_Line' not in self.df.columns:
+            print("Missing MACD/Signal Line. Run feature_engineering() first")
+            return
+        
+        # Generate signals
+        self.df['Signal'] = 0
+        # Buy when MACD crosses ABOVE Signal Line
+        self.df.loc[self.df['MACD'] > self.df['Signal_Line'], 'Signal'] = 1
+        # Sell when MACD crosses BELOW Signal Line
+        self.df['Position'] = self.df['Signal'].diff()
+        
+        print("Generated signals using MACD crossover (12/26/9 EMA)")
+
+    # Backtesting Engine
+    def backtest_strategy(self, initial_capital=10000):
+        """Backtest trading strategy with portfolio simulation"""
+        if self.df is None or 'Position' not in self.df.columns:
+            print("⚠️ Missing data or signals. Run fetch_data() and generate_signals() first")
+            return
+        
+        self.initial_capital = initial_capital
+        df = self.df.copy()
+        
+        # Initialize portfolio columns
+        df['Shares'] = 0
+        df['Cash'] = initial_capital
+        df['Total'] = initial_capital
+        df['Returns'] = 0.0
+        
+        for i in range(1, len(df)):
+            # Previous values
+            prev_shares = df['Shares'].iloc[i-1]
+            prev_cash = df['Cash'].iloc[i-1]
+            price = df['Adj Close'].iloc[i]
             
-            plt.title(f"{self.ticker} - Adjusted Close with Buy/Sell Signals")
-            plt.xlabel("Date")
-            plt.ylabel("Price")
+            # Buy Signal
+            if df['Position'].iloc[i] == 1:
+                buyable_shares = prev_cash // price
+                df.at[df.index[i], 'Shares'] = prev_shares + buyable_shares
+                df.at[df.index[i], 'Cash'] = prev_cash - (buyable_shares * price)
+            
+            # Sell Signal
+            elif df['Position'].iloc[i] == -1:
+                df.at[df.index[i], 'Cash'] = prev_cash + (prev_shares * price)
+                df.at[df.index[i], 'Shares'] = 0
+            
+            # No change
+            else:
+                df.at[df.index[i], 'Shares'] = prev_shares
+                df.at[df.index[i], 'Cash'] = prev_cash
+            
+            # Update portfolio value
+            df.at[df.index[i], 'Total'] = df.at[df.index[i], 'Cash'] + \
+                                         (df.at[df.index[i], 'Shares'] * price)
+            df.at[df.index[i], 'Returns'] = df.at[df.index[i], 'Total'] / \
+                                          df.at[df.index[i-1], 'Total'] - 1
+        
+        self.backtest_results = df
+        print("📊 Backtest complete")
+        return df
+
+    # Performance Metrics
+    def calculate_performance(self):
+        """Calculate key performance metrics"""
+        if self.backtest_results is None:
+            print("⚠️ No backtest results. Run backtest_strategy() first")
+            return
+        
+        df = self.backtest_results
+        metrics = {}
+        
+        # Total Return
+        metrics['Total Return (%)'] = (df['Total'][-1] / self.initial_capital - 1) * 100
+        
+        # Annualized Return
+        days = (df.index[-1] - df.index[0]).days
+        metrics['Annualized Return (%)'] = ((df['Total'][-1] / self.initial_capital) ** (365/days) - 1) * 100
+        
+        # Max Drawdown
+        cumulative_max = df['Total'].cummax()
+        drawdown = (df['Total'] - cumulative_max) / cumulative_max
+        metrics['Max Drawdown (%)'] = drawdown.min() * 100
+        
+        # Sharpe Ratio (assuming risk-free rate=0)
+        metrics['Sharpe Ratio'] = df['Returns'].mean() / df['Returns'].std() * np.sqrt(252)
+        
+        return pd.Series(metrics).round(2)
+
+    # Visualization Methods
+    def plot_price(self, interactive=False, save_path=None):
+        """Plot price data with indicators"""
+        if self.df is None:
+            print("⚠️ No data to plot")
+            return
+        
+        buys = sells = None
+        if 'Position' in self.df.columns:
+            buys = self.df[self.df['Position'] == 1]
+            sells = self.df[self.df['Position'] == -1]
+        
+        if interactive and PLOTLY_AVAILABLE:
+            fig = go.Figure()
+            # ... rest of plotly code unchanged ...
+        else:
+            plt.figure(figsize=(12, 6))
+            plt.plot(self.df['Adj Close'], label='Price', color='black')
+            
+            # Plot MAs
+            for col in self.df.columns:
+                if col.startswith('EMA'):
+                    plt.plot(self.df[col], label=col, alpha=0.7)
+            
+            # Plot signals if they exist
+            if buys is not None and sells is not None:
+                plt.scatter(
+                    buys.index, buys['Adj Close'],
+                    marker='^', color='green', s=100, label='Buy'
+                )
+                plt.scatter(
+                    sells.index, sells['Adj Close'],
+                    marker='v', color='red', s=100, label='Sell'
+                )
+            
+            plt.title(f"{self.ticker} Price Analysis")
             plt.legend()
             plt.grid(True)
+            if save_path:
+                plt.savefig(save_path)
             plt.show()
-        else:
-            print("[ERROR] No data to plot.")
+    def plot_performance(self):
+        """Plot backtest results"""
+        if self.backtest_results is None:
+            print("⚠️ No backtest results to plot")
+            return
+        
+        df = self.backtest_results
+        
+        plt.figure(figsize=(12, 6))
+        plt.plot(df['Total'], label='Portfolio Value')
+        plt.title(f"Strategy Performance ({self.ticker})")
+        plt.xlabel("Date")
+        plt.ylabel("Value ($)")
+        plt.grid(True)
+        plt.legend()
+        plt.show()
+

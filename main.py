@@ -1,22 +1,21 @@
 from data_explorer import StockDataExplorer
 from matplotlib import pyplot as plt
-# Step 1: Create an object
-explorer = StockDataExplorer("MSFT")
 
-# Step 2: Fetch the data
-explorer.fetch_data()
+analyzer = StockDataExplorer("AAPL", period="1y")
+analyzer.fetch_data()
+analyzer.clean_data()
+analyzer.feature_engineering()
 
-# Step 3: Clean the data
-explorer.clean_data()
+# Generate signals and backtest
+analyzer.generate_signals()
+analyzer.backtest_strategy(initial_capital=10000)
 
-# Step 4: Engineer new features
-explorer.feature_engineering()
+# Show results
+print("\n=== Performance Metrics ===")
+print(analyzer.calculate_performance())
 
-# Step 5: Explore the data
-explorer.show_summary()
-explorer.generate_signals()
-# Step 6: Plot various graphs
-explorer.plot_price()
-explorer.plot_volume()
-explorer.plot_returns()
+print("\n=== Price Plot ===")
+analyzer.plot_price(interactive=True)
 
+print("\n=== Performance Plot ===")
+analyzer.plot_performance()
