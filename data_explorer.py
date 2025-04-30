@@ -46,63 +46,95 @@ class StockDataExplorer:
             print(" No data to clean. Call fetch_data() first")
 
     # Feature Engineering
-    def feature_engineering(self, ema_windows=[12, 26], rsi_window=14, 
-                          macd_fast=12, macd_slow=26, macd_signal=9):
-        """Add technical indicators to DataFrame"""
+    # def feature_engineering(self, ema_windows=[12, 26], rsi_window=14, 
+    #                       macd_fast=12, macd_slow=26, macd_signal=9):
+    #     """Add technical indicators to DataFrame"""
+    #     if self.df is None:
+    #         print("⚠️ No data. Call fetch_data() first")
+    #         return
+        
+        
+    #     self.df['Return'] = self.df['Adj Close'].pct_change()
+        
+    #     ema_windows = [12, 26]  # or any other list of periods
+    #     for window in ema_windows:
+    #         self.df[f'EMA{window}'] = self.df['Adj Close'].ewm(span=window, adjust=False).mean()
+    #     # for window in ma_windows:
+    #     #     self.df[f'MA{window}'] = self.df['Adj Close'].rolling(window).mean()
+        
+        
+    #     self.df['Volatility20'] = self.df['Return'].rolling(20).std()
+        
+    #     # RSI
+    #     delta = self.df['Adj Close'].diff()
+    #     gain = delta.clip(lower=0)
+    #     loss = -delta.clip(upper=0)
+    #     avg_gain = gain.rolling(rsi_window).mean()
+    #     avg_loss = loss.rolling(rsi_window).mean()
+    #     rs = avg_gain / avg_loss
+    #     self.df['RSI'] = 100 - (100 / (1 + rs))
+        
+    #     # MACD
+    #     ema_fast = self.df['Adj Close'].ewm(span=macd_fast, adjust=False).mean()
+    #     ema_slow = self.df['Adj Close'].ewm(span=macd_slow, adjust=False).mean()
+    #     self.df['MACD'] = ema_fast - ema_slow
+    #     self.df['Signal_Line'] = self.df['MACD'].ewm(span=macd_signal, adjust=False).mean()
+        
+    #     print("🔧 Feature engineering complete")
+    #     return self.df
+    def feature_engineering(self, rsi_window=14, macd_fast=12, macd_slow=26, macd_signal=9):
         if self.df is None:
-            print("⚠️ No data. Call fetch_data() first")
+            print("No data. Call fetch_data() first")
             return
         
-        
+        # Price Returns
         self.df['Return'] = self.df['Adj Close'].pct_change()
         
-        ema_windows = [12, 26]  # or any other list of periods
+        # EMAs (12 and 26 for MACD components)
+        ema_windows = [12, 26]
         for window in ema_windows:
             self.df[f'EMA{window}'] = self.df['Adj Close'].ewm(span=window, adjust=False).mean()
-        # for window in ma_windows:
-        #     self.df[f'MA{window}'] = self.df['Adj Close'].rolling(window).mean()
         
+        # Volatility (EMA-based)
+        self.df['Volatility20'] = self.df['Return'].ewm(span=20).std()
         
-        self.df['Volatility20'] = self.df['Return'].rolling(20).std()
-        
-        # RSI
+        # RSI (EMA-smoothed)
         delta = self.df['Adj Close'].diff()
         gain = delta.clip(lower=0)
         loss = -delta.clip(upper=0)
-        avg_gain = gain.rolling(rsi_window).mean()
-        avg_loss = loss.rolling(rsi_window).mean()
+        avg_gain = gain.ewm(span=rsi_window).mean()  # EMA smoothing
+        avg_loss = loss.ewm(span=rsi_window).mean()
         rs = avg_gain / avg_loss
         self.df['RSI'] = 100 - (100 / (1 + rs))
         
-        # MACD
+        # MACD (EMA 12/26/9)
         ema_fast = self.df['Adj Close'].ewm(span=macd_fast, adjust=False).mean()
         ema_slow = self.df['Adj Close'].ewm(span=macd_slow, adjust=False).mean()
         self.df['MACD'] = ema_fast - ema_slow
         self.df['Signal_Line'] = self.df['MACD'].ewm(span=macd_signal, adjust=False).mean()
         
-        print("🔧 Feature engineering complete")
+        print("Feature engineering complete (EMA-only)")
         return self.df
-
-    # Signal Generation
+        # Signal Generation
     def generate_signals(self):
-        """Generate buy/sell signals using MACD crossover strategy"""
-        if self.df is None:
-            print("No data. Call fetch_data() first")
-            return
-        
-        # Ensure MACD columns exist
-        if 'MACD' not in self.df.columns or 'Signal_Line' not in self.df.columns:
-            print("Missing MACD/Signal Line. Run feature_engineering() first")
-            return
-        
-        # Generate signals
-        self.df['Signal'] = 0
-        # Buy when MACD crosses ABOVE Signal Line
-        self.df.loc[self.df['MACD'] > self.df['Signal_Line'], 'Signal'] = 1
-        # Sell when MACD crosses BELOW Signal Line
-        self.df['Position'] = self.df['Signal'].diff()
-        
-        print("Generated signals using MACD crossover (12/26/9 EMA)")
+            """Generate buy/sell signals using MACD crossover strategy"""
+            if self.df is None:
+                print("No data. Call fetch_data() first")
+                return
+            
+            # Ensure MACD columns exist
+            if 'MACD' not in self.df.columns or 'Signal_Line' not in self.df.columns:
+                print("Missing MACD/Signal Line. Run feature_engineering() first")
+                return
+            
+            # Generate signals
+            self.df['Signal'] = 0
+            # Buy when MACD crosses ABOVE Signal Line
+            self.df.loc[self.df['MACD'] > self.df['Signal_Line'], 'Signal'] = 1
+            # Sell when MACD crosses BELOW Signal Line
+            self.df['Position'] = self.df['Signal'].diff()
+            
+            print("Generated signals using MACD crossover (12/26/9 EMA)")
 
     # Backtesting Engine
     def backtest_strategy(self, initial_capital=10000):

@@ -1,7 +1,7 @@
 from data_explorer import StockDataExplorer
 from matplotlib import pyplot as plt
 
-analyzer = StockDataExplorer("AAPL", period="1y")
+analyzer = StockDataExplorer("AAPL", period="5y")
 analyzer.fetch_data()
 analyzer.clean_data()
 analyzer.feature_engineering()
