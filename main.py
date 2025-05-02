@@ -20,7 +20,7 @@ from matplotlib import pyplot as plt
 
 # print("\n=== Performance Plot ===")
 # analyzer.plot_performance()
-explorer = StockDataExplorer("MSFT", period="5y")
+explorer = StockDataExplorer("AAPL", period="5y")
 explorer.fetch_data()
 explorer.clean_data(method='interpolate')
 explorer.feature_engineering()
