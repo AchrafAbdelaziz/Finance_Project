@@ -1,21 +1,19 @@
-    import yfinance as yf
-    import pandas as pd
-    import numpy as np
-    import matplotlib.pyplot as plt
-    import logging
-    from typing import Optional, List, Dict
-
-    # Configure logging
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(__name__)
-
-    try:
-        import plotly.graph_objects as go
-        from plotly.subplots import make_subplots
-        PLOTLY_AVAILABLE = True
-    except ImportError:
-        PLOTLY_AVAILABLE = False
-        logger.warning("Plotly not installed - using matplotlib for plots")
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import logging
+from typing import Optional, List, Dict
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+try:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
+    logger.warning("Plotly not installed - using matplotlib for plots")
 
     class StockDataExplorer:
         def __init__(self, ticker: str, period: str = "6mo", interval: str = "1d"):
@@ -131,24 +129,21 @@
 
         # Signal Generation
         def generate_signals(self) -> None:
-            """Generate trading signals with shifted execution"""
-            if self.df is None:
-                logger.warning("No data. Call fetch_data() first")
+            if self.df is None or 'MACD' not in self.df.columns or 'RSI' not in self.df.columns:
+                logger.warning("Required indicators not available.")
                 return
-                
-            required_cols = ['MACD', 'Signal_Line']
-            if not all(col in self.df.columns for col in required_cols):
-                logger.warning("Missing MACD/Signal Line. Run feature_engineering() first")
-                return
-                
-            # Generate signals
-            self.df['Signal'] = 0
-            self.df.loc[self.df['MACD'] > self.df['Signal_Line'], 'Signal'] = 1
             
-            # Create positions with 1-day shift to prevent look-ahead bias
-            self.df['Position'] = self.df['Signal'].diff().shift(1)
-            logger.info("Generated signals with 1-day execution delay")
+            self.df['Signal'] = 0
+            
+            # Example buy condition: MACD > Signal line and RSI < 30
+            buy_condition = (self.df['MACD'] > self.df['Signal_Line']) & (self.df['RSI'] < 30)
+            sell_condition = (self.df['MACD'] < self.df['Signal_Line']) & (self.df['RSI'] > 70)
 
+            self.df.loc[buy_condition, 'Signal'] = 1
+            self.df.loc[sell_condition, 'Signal'] = -1
+            
+            self.df['Position'] = self.df['Signal'].diff().shift(1)
+            logger.info("Generated combined MACD+RSI signals.")
         # Backtesting Engine
         def backtest_strategy(
             self,
