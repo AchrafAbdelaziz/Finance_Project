@@ -96,7 +96,7 @@ class StockDataExplorer:
             self.df[f'EMA{window}'] = self.df['Adj Close'].ewm(span=window, adjust=False).mean()
         
         # Volatility (EMA-based)
-        self.df['Volatility20'] = self.df['Return'].ewm(span=20).std()
+        self.df['Volatility20'] = self.df['Return'].rolling(20).std()
         
         # RSI (EMA-smoothed)
         delta = self.df['Adj Close'].diff()
@@ -164,6 +164,7 @@ class StockDataExplorer:
                 buyable_shares = prev_cash / price
                 df.at[df.index[i], 'Shares'] = prev_shares + buyable_shares
                 df.at[df.index[i], 'Cash'] = prev_cash - (buyable_shares * price)
+                # Add transaction cost
                 cost = buyable_shares * price * transaction_cost
                 df.at[df.index[i], 'Cash'] = prev_cash - (buyable_shares * price) - cost
             # Sell Signal
