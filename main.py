@@ -7,6 +7,7 @@ analyzer.clean_data()
 analyzer.feature_engineering()
 
 # Generate signals and backtest
+# analyzer.show_data()
 analyzer.generate_signals()
 analyzer.backtest_strategy(initial_capital=10000)
 

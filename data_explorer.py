@@ -91,7 +91,7 @@ class StockDataExplorer:
         self.df['Return'] = self.df['Adj Close'].pct_change()
         
         # EMAs (12 and 26 for MACD components)
-        ema_windows = [12, 26]
+        ema_windows = [12, 26,20]
         for window in ema_windows:
             self.df[f'EMA{window}'] = self.df['Adj Close'].ewm(span=window, adjust=False).mean()
         
@@ -122,7 +122,7 @@ class StockDataExplorer:
                 print("No data. Call fetch_data() first")
                 return
             
-            # Ensure MACD columns exist
+            # Ensure MACD columns exist 
             if 'MACD' not in self.df.columns or 'Signal_Line' not in self.df.columns:
                 print("Missing MACD/Signal Line. Run feature_engineering() first")
                 return
@@ -132,7 +132,8 @@ class StockDataExplorer:
             # Buy when MACD crosses ABOVE Signal Line
             self.df.loc[self.df['MACD'] > self.df['Signal_Line'], 'Signal'] = 1
             # Sell when MACD crosses BELOW Signal Line
-            self.df['Position'] = self.df['Signal'].diff()
+            # self.df['Position'] = self.df['Signal'].diff()
+            self.df['Position'] = self.df['Signal'].diff().shift(1)
             
             print("Generated signals using MACD crossover (12/26/9 EMA)")
 
