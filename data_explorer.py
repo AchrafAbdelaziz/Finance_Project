@@ -138,7 +138,7 @@ class StockDataExplorer:
             print("Generated signals using MACD crossover (12/26/9 EMA)")
 
     # Backtesting Engine
-    def backtest_strategy(self, initial_capital=10000):
+    def backtest_strategy(self, initial_capital=10000 , transaction_cost=0.001):
         """Backtest trading strategy with portfolio simulation"""
         if self.df is None or 'Position' not in self.df.columns:
             print("⚠️ Missing data or signals. Run fetch_data() and generate_signals() first")
@@ -161,10 +161,11 @@ class StockDataExplorer:
             
             # Buy Signal
             if df['Position'].iloc[i] == 1:
-                buyable_shares = prev_cash // price
+                buyable_shares = prev_cash / price
                 df.at[df.index[i], 'Shares'] = prev_shares + buyable_shares
                 df.at[df.index[i], 'Cash'] = prev_cash - (buyable_shares * price)
-            
+                cost = buyable_shares * price * transaction_cost
+                df.at[df.index[i], 'Cash'] = prev_cash - (buyable_shares * price) - cost
             # Sell Signal
             elif df['Position'].iloc[i] == -1:
                 df.at[df.index[i], 'Cash'] = prev_cash + (prev_shares * price)
