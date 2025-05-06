@@ -1,4 +1,5 @@
 import yfinance as yf
+import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -15,7 +16,7 @@ except ImportError:
     PLOTLY_AVAILABLE = False
     logger.warning("Plotly not installed - using matplotlib for plots")
 
-    class StockDataExplorer:
+class StockDataExplorer:
         def __init__(self, ticker: str, period: str = "6mo", interval: str = "1d"):
             self.ticker = ticker
             self.period = period
@@ -120,6 +121,12 @@ except ImportError:
                     adjust=False
                 ).mean()
                 
+                # Bollinger Bands (default: 20-day SMA ± 2 std)
+                boll_window = 20
+                self.df['BB_Middle'] = self.df['Adj Close'].rolling(window=boll_window).mean()
+                self.df['BB_Upper'] = self.df['BB_Middle'] + 2 * self.df['Adj Close'].rolling(window=boll_window).std()
+                self.df['BB_Lower'] = self.df['BB_Middle'] - 2 * self.df['Adj Close'].rolling(window=boll_window).std()
+                
                 logger.info("Feature engineering complete")
                 return self.df
                 
@@ -132,18 +139,32 @@ except ImportError:
             if self.df is None or 'MACD' not in self.df.columns or 'RSI' not in self.df.columns:
                 logger.warning("Required indicators not available.")
                 return
-            
+
             self.df['Signal'] = 0
             
-            # Example buy condition: MACD > Signal line and RSI < 30
+            # Define buy/sell conditions
             buy_condition = (self.df['MACD'] > self.df['Signal_Line']) & (self.df['RSI'] < 30)
             sell_condition = (self.df['MACD'] < self.df['Signal_Line']) & (self.df['RSI'] > 70)
 
             self.df.loc[buy_condition, 'Signal'] = 1
             self.df.loc[sell_condition, 'Signal'] = -1
+
+            # Position = holding state (carry signal forward)
+            self.df['Position'] = 0
+            position = 0
+            for i in range(len(self.df)):
+                signal = self.df['Signal'].iloc[i]
+                if signal == 1:
+                    position = 1
+                elif signal == -1:
+                    position = -1
+                self.df.at[self.df.index[i], 'Position'] = position
+
+            # Trade = entry/exit signal (only when a signal changes)
+            self.df['Trade'] = self.df['Signal'].diff().fillna(0)
             
-            self.df['Position'] = self.df['Signal'].diff().shift(1)
             logger.info("Generated combined MACD+RSI signals.")
+
         # Backtesting Engine
         def backtest_strategy(
             self,
@@ -174,32 +195,27 @@ except ImportError:
                 prev_shares = df['Shares'].iloc[i-1]
                 prev_cash = df['Cash'].iloc[i-1]
                 
-                # Get execution price based on mode
-                if execution_mode == 'next_open':
-                    price = df['Open'].iloc[i]
-                else:  # 'close'
-                    price = df['Adj Close'].iloc[i]
-                
-                # Execute trades
-                position = df['Position'].iloc[i]
-                
-                if position == 1:  # Buy
-                    # Calculate maximum buyable shares with transaction cost
+                price = df['Open'].iloc[i] if execution_mode == 'next_open' else df['Adj Close'].iloc[i]
+                trade = df['Trade'].iloc[i]
+
+                if trade == 1:  # Buy
                     buyable_shares = prev_cash / (price * (1 + transaction_cost))
                     cost = buyable_shares * price * (1 + transaction_cost)
-                    
                     df.at[df.index[i], 'Shares'] = prev_shares + buyable_shares
                     df.at[df.index[i], 'Cash'] = prev_cash - cost
-                    
-                elif position == -1:  # Sell
-                    # Sell all shares with transaction cost
+
+                elif trade == -1:  # Sell
                     sale_value = prev_shares * price * (1 - transaction_cost)
                     df.at[df.index[i], 'Cash'] = prev_cash + sale_value
                     df.at[df.index[i], 'Shares'] = 0
-                    
+
                 else:  # Hold
                     df.at[df.index[i], 'Shares'] = prev_shares
                     df.at[df.index[i], 'Cash'] = prev_cash
+
+                
+                
+
                 
                 # Update portfolio value
                 df.at[df.index[i], 'Total'] = (
@@ -219,41 +235,77 @@ except ImportError:
 
         # Performance Metrics
         def calculate_performance(
-            self, 
+            self,
             risk_free_rate: float = 0.02
         ) -> Optional[pd.Series]:
             """Calculate comprehensive performance metrics"""
             if self.backtest_results is None:
                 logger.warning("No backtest results available")
                 return None
-                
+
             df = self.backtest_results
             metrics = {}
-            
-            # Returns
-            total_return = (df['Total'][-1] / self.initial_capital - 1) * 100
-            metrics['Total Return (%)'] = total_return
-            
-            days = (df.index[-1] - df.index[0]).days
-            annualized_return = ((df['Total'][-1] / self.initial_capital) ** (365/days) - 1) * 100
-            metrics['Annualized Return (%)'] = annualized_return
-            
-            # Risk Metrics
-            cumulative_max = df['Total'].cummax()
-            drawdown = (df['Total'] - cumulative_max) / cumulative_max
-            metrics['Max Drawdown (%)'] = drawdown.min() * 100
-            metrics['Volatility (ann.) (%)'] = df['Returns'].std() * np.sqrt(252) * 100
-            
-            # Risk-Adjusted Returns
-            excess_returns = df['Returns'] - (risk_free_rate / 252)
-            sharpe = excess_returns.mean() / excess_returns.std() * np.sqrt(252)
-            metrics['Sharpe Ratio'] = sharpe
-            
-            # Trade Metrics
-            trades = df[df['Position'] != 0]
-            metrics['Total Trades'] = len(trades)
-            metrics['Win Rate (%)'] = (trades['Returns'] > 0).mean() * 100
-            
+
+            # Total Return
+            try:
+                final_total = df['Total'].iloc[-1]
+                total_return = (final_total / self.initial_capital - 1) * 100
+                metrics['Total Return (%)'] = total_return
+            except Exception as e:
+                logger.error(f"Error calculating total return: {e}")
+                metrics['Total Return (%)'] = np.nan
+
+            # Annualized Return
+            try:
+                days = (df.index[-1] - df.index[0]).days
+                if days > 0:
+                    annualized_return = ((final_total / self.initial_capital) ** (365 / days) - 1) * 100
+                else:
+                    annualized_return = np.nan
+                metrics['Annualized Return (%)'] = annualized_return
+            except Exception as e:
+                logger.error(f"Error calculating annualized return: {e}")
+                metrics['Annualized Return (%)'] = np.nan
+
+            # Max Drawdown
+            try:
+                cumulative_max = df['Total'].cummax()
+                drawdown = (df['Total'] - cumulative_max) / cumulative_max
+                metrics['Max Drawdown (%)'] = drawdown.min() * 100
+            except Exception as e:
+                logger.error(f"Error calculating drawdown: {e}")
+                metrics['Max Drawdown (%)'] = np.nan
+
+            # Volatility
+            try:
+                volatility = df['Returns'].std() * np.sqrt(252) * 100
+                metrics['Volatility (ann.) (%)'] = volatility
+            except Exception as e:
+                logger.error(f"Error calculating volatility: {e}")
+                metrics['Volatility (ann.) (%)'] = np.nan
+
+            # Sharpe Ratio
+            try:
+                excess_returns = df['Returns'] - (risk_free_rate / 252)
+                if excess_returns.std() != 0:
+                    sharpe = excess_returns.mean() / excess_returns.std() * np.sqrt(252)
+                else:
+                    sharpe = np.nan
+                metrics['Sharpe Ratio'] = sharpe
+            except Exception as e:
+                logger.error(f"Error calculating Sharpe ratio: {e}")
+                metrics['Sharpe Ratio'] = np.nan
+
+            # Trades
+            try:
+                trades = df[df['Position'] != 0]
+                metrics['Total Trades'] = len(trades)
+                metrics['Win Rate (%)'] = (trades['Returns'] > 0).mean() * 100 if not trades.empty else 0.0
+            except Exception as e:
+                logger.error(f"Error calculating trade metrics: {e}")
+                metrics['Total Trades'] = 0
+                metrics['Win Rate (%)'] = 0.0
+
             return pd.Series(metrics).round(2)
 
         # Visualization Methods
@@ -274,16 +326,26 @@ except ImportError:
                 sells = self.df[self.df['Position'] == -1]
 
             if interactive and PLOTLY_AVAILABLE:
-                fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                                vertical_spacing=0.05,
-                                row_heights=[0.7, 0.3])
+                fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
+                    vertical_spacing=0.05,
+                    row_heights=[0.6, 0.2, 0.2])
                 
                 # Price and EMAs
                 fig.add_trace(go.Scatter(
                     x=self.df.index, y=self.df['Adj Close'],
                     name='Price', line=dict(color='black')
                 ), row=1, col=1)
-                
+                # Bollinger Bands
+                fig.add_trace(go.Scatter(
+                    x=self.df.index, y=self.df['BB_Upper'],
+                    name='BB Upper', line=dict(color='lightblue', dash='dot')
+                ), row=1, col=1)
+
+                fig.add_trace(go.Scatter(
+                    x=self.df.index, y=self.df['BB_Lower'],
+                    name='BB Lower', line=dict(color='lightblue', dash='dot'),
+                    fill='tonexty', fillcolor='rgba(173,216,230,0.2)'
+                ), row=1, col=1)
                 for col in self.df.columns:
                     if col.startswith('EMA'):
                         fig.add_trace(go.Scatter(
@@ -300,7 +362,19 @@ except ImportError:
                     x=self.df.index, y=self.df['Signal_Line'],
                     name='Signal', line=dict(color='orange')
                 ), row=2, col=1)
-                
+                # RSI
+                fig.add_trace(go.Scatter(
+                    x=self.df.index, y=self.df['RSI'],
+                    name='RSI', line=dict(color='purple')
+                ), row=3, col=1)
+
+                # Add horizontal lines for RSI thresholds (30 and 70)
+                fig.add_shape(type="line", x0=self.df.index[0], x1=self.df.index[-1],
+                            y0=70, y1=70, line=dict(color="gray", dash="dash"), row=3, col=1)
+                fig.add_shape(type="line", x0=self.df.index[0], x1=self.df.index[-1],
+                            y0=30, y1=30, line=dict(color="gray", dash="dash"), row=3, col=1)
+
+                fig.update_yaxes(title_text="RSI", row=3, col=1)
                 # Signals
                 if buys is not None:
                     fig.add_trace(go.Scatter(
@@ -322,41 +396,6 @@ except ImportError:
                     showlegend=True
                 )
                 fig.show()
-                
-            else:
-                fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
-                
-                # Price and EMAs
-                ax1.plot(self.df['Adj Close'], label='Price', color='black')
-                for col in self.df.columns:
-                    if col.startswith('EMA'):
-                        ax1.plot(self.df[col], label=col, alpha=0.7)
-                
-                if buys is not None:
-                    ax1.scatter(
-                        buys.index, buys['Adj Close'],
-                        marker='^', color='green', s=100, label='Buy'
-                    )
-                if sells is not None:
-                    ax1.scatter(
-                        sells.index, sells['Adj Close'],
-                        marker='v', color='red', s=100, label='Sell'
-                    )
-                ax1.set_title(f"{self.ticker} Price Analysis")
-                ax1.legend()
-                ax1.grid(True)
-                
-                # MACD
-                ax2.plot(self.df['MACD'], label='MACD', color='blue')
-                ax2.plot(self.df['Signal_Line'], label='Signal', color='orange')
-                ax2.set_title("MACD")
-                ax2.grid(True)
-                ax2.legend()
-                
-                plt.tight_layout()
-                if save_path:
-                    plt.savefig(save_path)
-                plt.show()
 
         def plot_performance(self) -> None:
             """Plot backtest performance vs benchmark"""
@@ -378,4 +417,3 @@ except ImportError:
             plt.grid(True)
             plt.legend()
             plt.show()
-
