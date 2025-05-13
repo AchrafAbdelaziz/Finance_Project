@@ -146,10 +146,11 @@ class StockDataExplorer:
                 return
 
             self.df['Signal'] = 0
-
+            self.df['Trend'] = self.df['Adj Close'] > self.df['Adj Close'].rolling(200).mean()
             buy_condition = (
                 (self.df['MACD'] > self.df['Signal_Line']) &
-                (self.df['RSI'] >= 40) & (self.df['RSI'] <= 50) 
+                 (self.df['RSI'] < 30) &
+                 (self.df['Volume'] > self.df['Volume'].rolling(20).mean())
                 # (self.df['Adj Close'] < self.df['BB_Middle']) &
                 # (self.df['Adj Close'] < (self.df['BB_Lower'] * 1.05))
             )
@@ -417,22 +418,48 @@ class StockDataExplorer:
                 fig.show()
 
         def plot_performance(self) -> None:
-            """Plot backtest performance vs benchmark"""
+            """Plot strategy performance vs S&P 500"""
             if self.backtest_results is None:
                 logger.warning("No performance data to plot")
                 return
                 
-            df = self.backtest_results
-            
-            plt.figure(figsize=(12, 6))
-            df['Total'].plot(label='Strategy')
-            (self.df['Adj Close'] / self.df['Adj Close'].iloc[0] * self.initial_capital).plot(
-                label='Buy & Hold', 
-                linestyle='--'
-            )
-            plt.title(f"Strategy Performance vs Buy & Hold ({self.ticker})")
-            plt.xlabel("Date")
-            plt.ylabel("Value ($)")
-            plt.grid(True)
-            plt.legend()
-            plt.show()
+            # Fetch S&P 500 data for the same period
+            try:
+                sp500 = yf.Ticker("^GSPC")
+                sp500_df = sp500.history(
+                    period=self.period,
+                    interval=self.interval,
+                    start=self.df.index[0],
+                    end=self.df.index[-1]
+                )
+                
+                if sp500_df.empty:
+                    raise ValueError("No S&P 500 data found")
+                    
+                # Calculate normalized performance
+                strategy_normalized = self.backtest_results['Total'] / self.initial_capital
+                sp500_normalized = sp500_df['Close'] / sp500_df['Close'].iloc[0]
+                
+                plt.figure(figsize=(12, 6))
+                strategy_normalized.plot(label='Strategy')
+                sp500_normalized.plot(label='S&P 500', linestyle='--')
+                
+                plt.title(f"Strategy Performance vs S&P 500 ({self.ticker})")
+                plt.xlabel("Date")
+                plt.ylabel("Normalized Value")
+                plt.grid(True)
+                plt.legend()
+                plt.show()
+                
+            except Exception as e:
+                logger.error(f"Error plotting performance vs S&P 500: {str(e)}")
+                # Fallback to original plot if S&P 500 data fails
+                plt.figure(figsize=(12, 6))
+                self.backtest_results['Total'].plot(label='Strategy')
+                plt.title(f"Strategy Performance ({self.ticker})")
+                plt.xlabel("Date")
+                plt.ylabel("Value ($)")
+                plt.grid(True)
+                plt.legend()
+                plt.show()
+        
