@@ -133,7 +133,12 @@ class StockDataExplorer:
             except Exception as e:
                 logger.error(f"Feature engineering failed: {str(e)}")
                 return None
-
+        def show_data(self):
+            if self.df is None:
+                logger.warning("No data to show. Call fetch_data() first")
+                return
+            pd.set_option("display.max_columns", 1000)
+            print(self.df)
         # Signal Generation
         def generate_signals(self) -> None:
             if self.df is None or 'MACD' not in self.df.columns or 'RSI' not in self.df.columns:
@@ -141,31 +146,45 @@ class StockDataExplorer:
                 return
 
             self.df['Signal'] = 0
-            
-            # Define buy/sell conditions
-            buy_condition = (self.df['MACD'] > self.df['Signal_Line']) & (self.df['RSI'] < 30)
-            sell_condition = (self.df['MACD'] < self.df['Signal_Line']) & (self.df['RSI'] > 70)
+
+            buy_condition = (
+                (self.df['MACD'] > self.df['Signal_Line']) &
+                (self.df['RSI'] >= 40) & (self.df['RSI'] <= 50) 
+                # (self.df['Adj Close'] < self.df['BB_Middle']) &
+                # (self.df['Adj Close'] < (self.df['BB_Lower'] * 1.05))
+            )
+
+            sell_condition = (
+                (self.df['MACD'] < self.df['Signal_Line']) &
+                (self.df['RSI'] > 70)
+                # (self.df['Adj Close'] > self.df['BB_Middle']) &
+                # (self.df['Adj Close'] > (self.df['BB_Upper'] * 0.95))
+            )
 
             self.df.loc[buy_condition, 'Signal'] = 1
             self.df.loc[sell_condition, 'Signal'] = -1
 
-            # Position = holding state (carry signal forward)
             self.df['Position'] = 0
-            position = 0
+            current_position = 0
+
             for i in range(len(self.df)):
-                signal = self.df['Signal'].iloc[i]
-                if signal == 1:
-                    position = 1
-                elif signal == -1:
-                    position = -1
-                self.df.at[self.df.index[i], 'Position'] = position
+                sig = self.df['Signal'].iloc[i]
 
-            # Trade = entry/exit signal (only when a signal changes)
-            self.df['Trade'] = self.df['Signal'].diff().fillna(0)
-            
-            logger.info("Generated combined MACD+RSI signals.")
+                if sig == 1:
+                    current_position = 1  # Enter long
+                elif sig == -1:
+                    current_position = -1  # Enter short
+                else:
+                    # Exit if current position no longer valid
+                    if current_position == 1 and not buy_condition.iloc[i]:
+                        current_position = 0
+                    elif current_position == -1 and not sell_condition.iloc[i]:
+                        current_position = 0
 
-        # Backtesting Engine
+                self.df.at[self.df.index[i], 'Position'] = current_position
+
+            self.df['Trade'] = self.df['Position'].diff().fillna(0)
+
         def backtest_strategy(
             self,
             initial_capital: float = 10000,
