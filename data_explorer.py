@@ -462,4 +462,290 @@ class StockDataExplorer:
                 plt.grid(True)
                 plt.legend()
                 plt.show()
+        def enhanced_price_chart(self, interactive: bool = True):
+            """Enhanced price chart with candlesticks and moving averages"""
+            if self.df is None:
+                logger.warning("No data to plot")
+                return
+                
+            if interactive and PLOTLY_AVAILABLE:
+                fig = make_subplots(rows=2, cols=1, 
+                                shared_xaxes=True,
+                                vertical_spacing=0.05,
+                                row_heights=[0.7, 0.3])
+                
+                # Candlestick chart
+                fig.add_trace(go.Candlestick(
+                    x=self.df.index,
+                    open=self.df['Open'],
+                    high=self.df['High'],
+                    low=self.df['Low'],
+                    close=self.df['Close'],
+                    name='Price',
+                    increasing_line_color='green',
+                    decreasing_line_color='red'
+                ), row=1, col=1)
+                
+                # Add key moving averages (50-day and 200-day)
+                for window, color in [(50, 'blue'), (200, 'red')]:
+                    if f'EMA{window}' not in self.df.columns:
+                        self.df[f'EMA{window}'] = self.df['Close'].ewm(span=window).mean()
+                        
+                    fig.add_trace(go.Scatter(
+                        x=self.df.index,
+                        y=self.df[f'EMA{window}'],
+                        name=f'EMA {window}',
+                        line=dict(color=color, width=1)
+                    ), row=1, col=1)
+                
+                # Volume in lower subplot
+                fig.add_trace(go.Bar(
+                    x=self.df.index,
+                    y=self.df['Volume'],
+                    name='Volume',
+                    marker_color='rgba(100, 100, 255, 0.6)'
+                ), row=2, col=1)
+                
+                fig.update_layout(
+                    title=f"{self.ticker} Enhanced Price Chart",
+                    xaxis_rangeslider_visible=False,
+                    hovermode="x unified",
+                    height=600
+                )
+                
+                # Add support/resistance levels (example)
+                support_level = self.df['Close'].min()
+                resistance_level = self.df['Close'].max()
+                
+                fig.add_hline(y=support_level, line_dash="dot", 
+                            annotation_text=f"Support: {support_level:.2f}", 
+                            row=1, col=1)
+                fig.add_hline(y=resistance_level, line_dash="dot", 
+                            annotation_text=f"Resistance: {resistance_level:.2f}", 
+                            row=1, col=1)
+                
+                fig.show()
+            else:
+                # Fallback to matplotlib
+                plt.figure(figsize=(12,8))
+                
+                # Plot candlesticks
+                plt.subplot(2,1,1)
+                plt.title(f"{self.ticker} Price Chart")
+                
+                # Simple line plot as fallback
+                plt.plot(self.df.index, self.df['Close'], label='Price', color='black')
+                for window, color in [(50, 'blue'), (200, 'red')]:
+                    if f'EMA{window}' not in self.df.columns:
+                        self.df[f'EMA{window}'] = self.df['Close'].ewm(span=window).mean()
+                    plt.plot(self.df.index, self.df[f'EMA{window}'], 
+                            label=f'EMA {window}', color=color)
+                
+                plt.legend()
+                
+                # Volume
+                plt.subplot(2,1,2)
+                plt.bar(self.df.index, self.df['Volume'], color='blue', alpha=0.5)
+                plt.title('Volume')
+                
+                plt.tight_layout()
+                plt.show()
+        def add_rsi(self, window: int = 14, overbought: int = 70, oversold: int = 30):
+            """Add RSI indicator with customizable thresholds"""
+            if self.df is None:
+                logger.warning("No data available")
+                return
+                
+            delta = self.df['Close'].diff()
+            gain = delta.clip(lower=0)
+            loss = -delta.clip(upper=0)
+            
+            avg_gain = gain.ewm(span=window, adjust=False).mean()
+            avg_loss = loss.ewm(span=window, adjust=False).mean()
+            
+            rs = avg_gain / avg_loss
+            self.df['RSI'] = 100 - (100 / (1 + rs))
+            
+            # Add thresholds to DataFrame
+            self.df['RSI_Overbought'] = overbought
+            self.df['RSI_Oversold'] = oversold
+            
+            logger.info(f"Added RSI with window={window}, overbought={overbought}, oversold={oversold}")        
+        def enhanced_macd(self):
+            """Enhanced MACD visualization with histogram"""
+            if 'MACD' not in self.df.columns:
+                logger.warning("MACD not calculated. Run feature_engineering first")
+                return
+                
+            if PLOTLY_AVAILABLE:
+                fig = make_subplots(rows=2, cols=1, shared_xaxes=True)
+                
+                # MACD components
+                fig.add_trace(go.Scatter(
+                    x=self.df.index, y=self.df['MACD'],
+                    name='MACD', line=dict(color='blue')
+                ), row=1, col=1)
+                
+                fig.add_trace(go.Scatter(
+                    x=self.df.index, y=self.df['Signal_Line'],
+                    name='Signal', line=dict(color='orange')
+                ), row=1, col=1)
+                
+                # MACD Histogram
+                hist_color = np.where(self.df['MACD'] > self.df['Signal_Line'], 'green', 'red')
+                fig.add_trace(go.Bar(
+                    x=self.df.index,
+                    y=self.df['MACD'] - self.df['Signal_Line'],
+                    name='MACD Histogram',
+                    marker_color=hist_color
+                ), row=2, col=1)
+                
+                fig.update_layout(
+                    title=f"{self.ticker} Enhanced MACD",
+                    height=500
+                )
+                fig.show()
+            else:
+                # Matplotlib version
+                plt.figure(figsize=(12,8))
+                
+                plt.subplot(2,1,1)
+                plt.plot(self.df.index, self.df['MACD'], label='MACD')
+                plt.plot(self.df.index, self.df['Signal_Line'], label='Signal')
+                plt.legend()
+                plt.title('MACD')
+                
+                plt.subplot(2,1,2)
+                plt.bar(self.df.index, 
+                    self.df['MACD'] - self.df['Signal_Line'],
+                    color=np.where(self.df['MACD'] > self.df['Signal_Line'], 'g', 'r'))
+                plt.title('MACD Histogram')
+                
+                plt.tight_layout()
+                plt.show()            
+        def add_bollinger_bands(self, window: int = 20, num_std: float = 2):
+            """Enhanced Bollinger Bands with %B indicator"""
+            if self.df is None:
+                logger.warning("No data available")
+                return
+                
+            self.df['BB_Middle'] = self.df['Close'].rolling(window=window).mean()
+            std = self.df['Close'].rolling(window=window).std()
+            
+            self.df['BB_Upper'] = self.df['BB_Middle'] + (std * num_std)
+            self.df['BB_Lower'] = self.df['BB_Middle'] - (std * num_std)
+            
+            # Add %B indicator
+            self.df['BB_%B'] = (self.df['Close'] - self.df['BB_Lower']) / (
+                self.df['BB_Upper'] - self.df['BB_Lower'])
+            
+            logger.info(f"Added Bollinger Bands (window={window}, std={num_std})")
+        def full_technical_view(self):
+            """Complete technical analysis dashboard"""
+            if not all(col in self.df.columns for col in ['RSI', 'MACD', 'BB_Upper']):
+                logger.warning("Missing indicators. Run feature_engineering first")
+                return
+                
+            if PLOTLY_AVAILABLE:
+                fig = make_subplots(rows=4, cols=1, 
+                                shared_xaxes=True,
+                                vertical_spacing=0.02,
+                                row_heights=[0.5, 0.15, 0.15, 0.2])
+                
+                # Price with Bollinger Bands
+                fig.add_trace(go.Candlestick(
+                    x=self.df.index,
+                    open=self.df['Open'],
+                    high=self.df['High'],
+                    low=self.df['Low'],
+                    close=self.df['Close'],
+                    name='Price'
+                ), row=1, col=1)
+                
+                # Bollinger Bands
+                fig.add_trace(go.Scatter(
+                    x=self.df.index, y=self.df['BB_Upper'],
+                    name='BB Upper', line=dict(color='gray')
+                ), row=1, col=1)
+                
+                fig.add_trace(go.Scatter(
+                    x=self.df.index, y=self.df['BB_Middle'],
+                    name='BB Middle', line=dict(color='blue')
+                ), row=1, col=1)
+                
+                fig.add_trace(go.Scatter(
+                    x=self.df.index, y=self.df['BB_Lower'],
+                    name='BB Lower', line=dict(color='gray'),
+                    fill='tonexty', fillcolor='rgba(200,200,200,0.2)'
+                ), row=1, col=1)
+                
+                # MACD
+                fig.add_trace(go.Scatter(
+                    x=self.df.index, y=self.df['MACD'],
+                    name='MACD', line=dict(color='blue')
+                ), row=2, col=1)
+                
+                fig.add_trace(go.Scatter(
+                    x=self.df.index, y=self.df['Signal_Line'],
+                    name='Signal', line=dict(color='orange')
+                ), row=2, col=1)
+                
+                # RSI
+                fig.add_trace(go.Scatter(
+                    x=self.df.index, y=self.df['RSI'],
+                    name='RSI', line=dict(color='purple')
+                ), row=3, col=1)
+                
+                fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)
+                fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)
+                
+                # Volume
+                fig.add_trace(go.Bar(
+                    x=self.df.index, y=self.df['Volume'],
+                    name='Volume', marker_color='blue'
+                ), row=4, col=1)
+                
+                fig.update_layout(
+                    title=f"{self.ticker} Complete Technical View",
+                    height=800,
+                    xaxis_rangeslider_visible=False,
+                    showlegend=True
+                )
+                
+                fig.show()
+            else:
+                # Matplotlib version
+                plt.figure(figsize=(12,10))
+                
+                # Price
+                plt.subplot(4,1,1)
+                plt.plot(self.df.index, self.df['Close'], label='Price')
+                plt.plot(self.df.index, self.df['BB_Upper'], label='BB Upper', color='gray')
+                plt.plot(self.df.index, self.df['BB_Middle'], label='BB Middle', color='blue')
+                plt.plot(self.df.index, self.df['BB_Lower'], label='BB Lower', color='gray')
+                plt.fill_between(self.df.index, self.df['BB_Lower'], self.df['BB_Upper'], 
+                                color='gray', alpha=0.1)
+                plt.title(f"{self.ticker} Technical Analysis")
+                plt.legend()
+                
+                # MACD
+                plt.subplot(4,1,2)
+                plt.plot(self.df.index, self.df['MACD'], label='MACD')
+                plt.plot(self.df.index, self.df['Signal_Line'], label='Signal')
+                plt.legend()
+                
+                # RSI
+                plt.subplot(4,1,3)
+                plt.plot(self.df.index, self.df['RSI'], label='RSI', color='purple')
+                plt.axhline(70, color='red', linestyle='--')
+                plt.axhline(30, color='green', linestyle='--')
+                plt.ylim(0, 100)
+                plt.legend()
+                
+                # Volume
+                plt.subplot(4,1,4)
+                plt.bar(self.df.index, self.df['Volume'], color='blue', alpha=0.5)
+                
+                plt.tight_layout()
+                plt.show()
         
